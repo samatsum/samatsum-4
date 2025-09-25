@@ -1,18 +1,3 @@
-# ファイル拡張子	.py
-# 必須関数	"必須関数 get_move(
-#     board: list[list[list[int]]],
-#     player: int,
-#     last_move: tuple[int, int, int]
-# ) -> tuple[int, int]
-# "
-# 戻り値	(x, y) のタプル（0〜3 の範囲）
-# 利用可能ライブラリ	Python標準ライブラリのみ（）
-# 禁止ライブラリ	os, sys, subprocess, socket, requests, urllib, http, asyncio, threading, multiprocessing, など
-# 禁止関数	open, eval, exec, compile, __import__, system, popen
-# Pythonバージョン	サーバは Python 3.9 互換 で実行（match文など3.10以降専用構文は不可）
-# 実行制限	メモリ最大 約1GB、CPU時間 約3秒、1手あたり待ち時間上限 30秒
-
-# https://docs.python.org/ja/3.9/library/index.html Python 3.9 標準ライブラリドキュメント(必見だべや！）
 from typing import Optional, Dict
 # from local_driver import Alg3D, Board # ローカル検証用
 from framework import Alg3D, Board # 本番用
@@ -20,31 +5,23 @@ import math
 import random
 from dataclasses import dataclass
 
-"""
-置換表（Transposition Table）のエントリを表すクラス
-- hash_key: ゾブリストハッシュ値（ハッシュ衝突検出用）
-- depth: この評価値を計算した際の探索深度
-- score: 盤面の評価値
-- flag: 評価値のタイプ（EXACT, LOWERBOUND, UPPERBOUND）
-- best_move: この盤面での最善手
-"""
 @dataclass
 class TranspositionEntry:
+    """
+    置換表（Transposition Table）のエントリを表すクラス
+    - hash_key: ゾブリストハッシュ値（ハッシュ衝突検出用）
+    - depth: この評価値を計算した際の探索深度
+    - score: 盤面の評価値
+    - flag: 評価値のタイプ（EXACT, LOWERBOUND, UPPERBOUND）
+    - best_move: この盤面での最善手
+    """
     hash_key: int
     depth: int 
     score: float
     flag: str  # "EXACT", "LOWERBOUND", "UPPERBOUND"
     best_move: Optional[tuple[int, int]]
 
-"""
-立体四目並べAI - Bitboard + 置換表 + ゾブリストハッシュ実装
-主要技術: Bitboard, Alpha-Beta pruning, 置換表, ゾブリストハッシュ, 勝利パターン事前計算
-"""
 class MyAI(Alg3D):
-    
-    """
-    AIの初期化 - 各種データ構造とハッシュテーブルの準備
-    """
     def __init__(self):
         self.max_depth = 4  # 探索深度
         self.player_num = None  # 自分のプレイヤー番号
@@ -52,73 +29,110 @@ class MyAI(Alg3D):
         # 勝利パターンを事前計算（ビットマスク）
         self.win_patterns = self._generate_win_patterns()
         
-        # ゾブリストハッシュテーブルの初期化
+        # ===== ゾブリストハッシュの初期化 =====
+        # 4x4x4 = 64位置 × 2プレイヤー = 128個のランダム値を生成
         self.zobrist_table = self._initialize_zobrist_table()
         
-        # 置換表の初期化（メモリ制限対応）
-        self.max_table_size = 1000000  # 最大100万エントリ（約100MB）
+        # ===== 置換表（Transposition Table）の初期化 =====
+        # メモリ制限対応：最大サイズを制限（約100MBに相当）
+        self.max_table_size = 1000000  # 最大100万エントリ
         self.transposition_table: Dict[int, TranspositionEntry] = {}
         
-        # 統計情報（デバッグ用）
+        # 置換表のヒット数統計（デバッグ用）
         self.tt_hits = 0
         self.tt_queries = 0
         
-    """
-    ゾブリストハッシュテーブルを初期化
-    64位置*2プレイヤー分のランダム値を生成
-    """
     def _initialize_zobrist_table(self) -> list[list[int]]:
+        """
+        ゾブリストハッシュテーブルを初期化
+        
+        ゾブリストハッシュとは：
+        - 各盤面位置とプレイヤーの組み合わせに対して、ランダムな64ビット数を割り当て
+        - 盤面のハッシュ値は、そこに置かれている全ての石に対応する値のXORで計算
+        - 手を打つ/戻すときは、対応する値をXORするだけで高速にハッシュ値を更新可能
+        
+        戻り値：zobrist_table[position][player] = random_value の2次元リスト
+        """
         random.seed(42)  # 再現性のため固定シード使用
         zobrist_table = []
         
-        for position in range(64):  # 4x4x4 = 64位置
+        # 64位置分（4x4x4）のランダム値を生成
+        for position in range(64):
             player_values = []
             for player in range(2):  # プレイヤー0（黒）、プレイヤー1（白）
+                # 64ビットのランダム値を生成
                 random_value = random.randint(0, (1 << 63) - 1)
                 player_values.append(random_value)
             zobrist_table.append(player_values)
         
         return zobrist_table
     
-    """
-    ビットボードからゾブリストハッシュ値を計算
-    黒石・白石の全位置に対応するゾブリスト値をXORで合成
-    """
     def _compute_zobrist_hash(self, black_board: int, white_board: int) -> int:
+        """
+        ビットボードからゾブリストハッシュ値を計算
+        
+        処理の流れ：
+        1. 黒石が置かれている位置を特定
+        2. 各位置に対応するゾブリスト値をXOR
+        3. 白石についても同様に処理
+        4. 全てのXORの結果がハッシュ値
+        """
         hash_value = 0
         
-        # 黒石のハッシュ値計算
+        # 黒石（プレイヤー1）のハッシュ値を計算
         temp_black = black_board
         while temp_black:
+            # 最下位の1ビットの位置を取得
             position = (temp_black & -temp_black).bit_length() - 1
-            hash_value ^= self.zobrist_table[position][0]
+            # 対応するゾブリスト値をXOR
+            hash_value ^= self.zobrist_table[position][0]  # プレイヤー0（黒）
+            # 処理済みのビットをクリア
             temp_black &= temp_black - 1
         
-        # 白石のハッシュ値計算
+        # 白石（プレイヤー2）のハッシュ値を計算
         temp_white = white_board
         while temp_white:
             position = (temp_white & -temp_white).bit_length() - 1
-            hash_value ^= self.zobrist_table[position][1]
+            hash_value ^= self.zobrist_table[position][1]  # プレイヤー1（白）
             temp_white &= temp_white - 1
             
         return hash_value
     
-    """
-    置換表のサイズ管理（メモリ制限対応）
-    テーブルサイズが上限を超えた場合、古いエントリを削除
-    """
     def _manage_table_size(self):
+        """
+        置換表のサイズ管理（メモリ制限対応）
+        
+        メモリ制限を超えないよう、置換表のサイズを監視し、
+        必要に応じて古いエントリを削除する
+        """
         if len(self.transposition_table) > self.max_table_size:
-            # テーブルサイズを半分にする（簡単な実装）
+            # 簡単な実装：テーブルサイズを半分にする
+            # より高度な実装では、アクセス頻度や深度に基づいて削除する
             items = list(self.transposition_table.items())
+            # 後半を削除（ランダムに近い効果）
             keep_count = len(items) // 2
             self.transposition_table = dict(items[:keep_count])
     
-    """
-    置換表から過去の探索結果を検索
-    同じ盤面があれば再計算をスキップし、Alpha-Betaウィンドウとの整合性をチェック
-    """
     def _lookup_transposition_table(self, hash_key: int, depth: int, alpha: float, beta: float) -> tuple[bool, float, Optional[tuple[int, int]]]:
+        """
+        置換表から過去の探索結果を検索
+        
+        置換表の基本概念：
+        - 以前に評価した盤面の結果を保存しておく
+        - 同じ盤面に再度遭遇した際、再計算せずに保存された結果を利用
+        - 探索の重複を削減し、大幅な高速化を実現
+        
+        引数：
+            hash_key: 盤面のゾブリストハッシュ値
+            depth: 現在の探索深度
+            alpha, beta: Alpha-Beta探索のウィンドウ
+        
+        戻り値：
+            (found, score, best_move) のタプル
+            - found: 有効な結果が見つかったかどうか
+            - score: 評価値（見つからない場合は0）
+            - best_move: 最善手（見つからない場合はNone）
+        """
         self.tt_queries += 1
         
         if hash_key not in self.transposition_table:
@@ -126,34 +140,41 @@ class MyAI(Alg3D):
         
         entry = self.transposition_table[hash_key]
         
-        # ハッシュ衝突検証
+        # ハッシュ衝突の検証（念のため）
         if entry.hash_key != hash_key:
             return False, 0.0, None
         
-        # 探索深度が不十分な場合は使用しない
+        # 保存された探索深度が現在の探索深度以上の場合のみ使用
         if entry.depth < depth:
             return False, 0.0, None
         
-        # 評価値タイプに応じた利用可能性判定
+        # 評価値のタイプに応じて利用可能性を判定
         if entry.flag == "EXACT":
+            # 正確な値の場合はそのまま使用可能
             self.tt_hits += 1
             return True, entry.score, entry.best_move
         elif entry.flag == "LOWERBOUND" and entry.score >= beta:
+            # 下限値がbeta以上の場合、beta cutoff可能
             self.tt_hits += 1
             return True, entry.score, entry.best_move
         elif entry.flag == "UPPERBOUND" and entry.score <= alpha:
+            # 上限値がalpha以下の場合、alpha cutoff可能
             self.tt_hits += 1
             return True, entry.score, entry.best_move
         
-        # 使用できないが、best_moveの情報は有用
+        # 使用できない場合でも、best_moveの情報は有用
         return False, 0.0, entry.best_move
     
-    """
-    置換表に探索結果を保存
-    評価値のタイプ（EXACT/LOWERBOUND/UPPERBOUND）を判定して保存
-    """
     def _store_transposition_table(self, hash_key: int, depth: int, score: float, 
                                   alpha: float, beta: float, best_move: Optional[tuple[int, int]]):
+        """
+        置換表に探索結果を保存
+        
+        評価値のタイプ分類：
+        - EXACT: 正確な値（alpha < score < beta）
+        - LOWERBOUND: 下限値（score >= beta、beta cutoffが発生）
+        - UPPERBOUND: 上限値（score <= alpha、実際の値はこれ以下）
+        """
         # メモリ使用量管理
         self._manage_table_size()
         
@@ -176,16 +197,15 @@ class MyAI(Alg3D):
         
         self.transposition_table[hash_key] = entry
 
-    """
-    メインのAI思考ルーチン
-    置換表+ゾブリストハッシュ対応の立体４目並べAI
-    """
     def get_move(
         self,
         board: list[list[list[int]]], # 盤面情報
         player: int, # 先手(黒):1 後手(白):2
         last_move: tuple[int, int, int] # 直前に置かれた場所(x, y, z)
     ) -> tuple[int, int]:
+        """
+        置換表+ゾブリストハッシュ対応の立体４目並べAI
+        """
         self.player_num = player
         
         # 置換表の統計をリセット
@@ -214,13 +234,18 @@ class MyAI(Alg3D):
         
         return best_move
     
-    """
-    置換表を利用したAlpha-Betaプルーニング付きのMinimax探索
-    ゾブリストハッシュによる高速盤面識別と置換表による重複計算削減
-    """
     def _alpha_beta_with_tt(self, black_board: int, white_board: int, depth: int, 
                            alpha: float, beta: float, maximizing_player: bool, 
                            current_player: int) -> tuple[float, Optional[tuple[int, int]]]:
+        """
+        置換表を利用したAlpha-Betaプルーニング付きのMinimax探索
+        
+        高速化のポイント：
+        1. 探索開始前に置換表をチェック
+        2. 過去の結果があれば再計算をスキップ
+        3. 探索終了後に結果を置換表に保存
+        4. ゾブリストハッシュで盤面を高速識別
+        """
         # ===== Step 1: ゾブリストハッシュを計算 =====
         hash_key = self._compute_zobrist_hash(black_board, white_board)
         original_alpha = alpha  # 置換表保存用に元のalpha値を保持
@@ -298,13 +323,10 @@ class MyAI(Alg3D):
             self._store_transposition_table(hash_key, depth, min_eval, original_alpha, beta, best_move)
             return min_eval, best_move
     
-    # ===== ビットボード関連の基本操作 =====
+    # ===== 以下、元のコードの関数群（変更なし） =====
     
-    """
-    3次元リストをビットボードに変換
-    4x4x4の盤面を64ビット整数2つ（黒・白）で表現
-    """
     def _convert_to_bitboard(self, board: list[list[list[int]]]) -> tuple[int, int]:
+        """3次元リストをビットボードに変換"""
         black_board = 0
         white_board = 0
         
@@ -319,11 +341,8 @@ class MyAI(Alg3D):
         
         return black_board, white_board
     
-    """
-    ビットボードから有効な手を取得
-    各(x,y)位置の最上層（z=3）が空いているかをチェック
-    """
     def _get_valid_moves_bb(self, black_board: int, white_board: int) -> list[tuple[int, int]]:
+        """ビットボードから有効な手を取得"""
         valid_moves = []
         occupied = black_board | white_board
         
@@ -336,12 +355,9 @@ class MyAI(Alg3D):
         
         return valid_moves
     
-    """
-    ビットボードに手を打ち、新しいボードとz座標を返す
-    重力により下から順に石が積み重なる
-    """
     def _make_move_bb(self, black_board: int, white_board: int, x: int, y: int, 
                      player: int) -> tuple[int, int, int]:
+        """ビットボードに手を打ち、新しいボードとz座標を返す"""
         occupied = black_board | white_board
         
         # 下から順に空いている位置を探す
@@ -355,30 +371,21 @@ class MyAI(Alg3D):
         
         return black_board, white_board, -1  # 置けない場合
     
-    """
-    ビットボード版ゲーム終了判定
-    勝者がいるか、盤面が満杯かをチェック
-    """
     def _is_terminal_bb(self, black_board: int, white_board: int) -> bool:
+        """ビットボード版ゲーム終了判定"""
         if self._check_win_bb(black_board) or self._check_win_bb(white_board):
             return True
         return len(self._get_valid_moves_bb(black_board, white_board)) == 0
     
-    """
-    ビットボード版勝利判定
-    事前計算した勝利パターンとのビット演算でO(1)判定
-    """
     def _check_win_bb(self, board: int) -> bool:
+        """ビットボード版勝利判定"""
         for pattern in self.win_patterns:
             if (board & pattern) == pattern:
                 return True
         return False
     
-    """
-    4つ並びの勝利パターンを事前計算
-    13方向（X/Y/Z軸、各種対角線）の全パターンをビットマスクで生成
-    """
     def _generate_win_patterns(self) -> list[int]:
+        """4つ並びの勝利パターンを事前計算"""
         patterns = []
         
         directions = [
@@ -418,13 +425,8 @@ class MyAI(Alg3D):
         
         return patterns
     
-    # ===== 盤面評価関数 =====
-    
-    """
-    ビットボード版盤面評価関数
-    勝利状態の特別評価 + 連続性（脅威）の評価
-    """
     def _evaluate_board_bb(self, black_board: int, white_board: int) -> float:
+        """ビットボード版盤面評価関数"""
         if self.player_num is None:
             return 0.0
         
@@ -441,11 +443,8 @@ class MyAI(Alg3D):
         
         return player_score - opponent_score
     
-    """
-    ビットボード版脅威評価
-    勝利パターンから自分の石の連続性を評価（3つ並び50点、2つ並び10点、1つ1点）
-    """
     def _evaluate_threats_bb(self, my_board: int, opp_board: int) -> float:
+        """ビットボード版脅威評価"""
         score = 0.0
         
         for pattern in self.win_patterns:
@@ -466,22 +465,13 @@ class MyAI(Alg3D):
         
         return score
     
-    # ===== 互換性のための関数群 =====
-    
-    """
-    互換性のための関数 - 有効手取得
-    """
+    # 互換性のための関数群
     def get_valid_moves(self, board: list[list[list[int]]]) -> list[tuple[int, int]]:
+        """互換性のための関数"""
         black_board, white_board = self._convert_to_bitboard(board)
         return self._get_valid_moves_bb(black_board, white_board)
     
-    """
-    互換性のための関数 - Alpha-Beta探索
-    """
     def alpha_beta(self, board: list[list[list[int]]], depth: int, alpha: float, beta: float, 
-                   maximizing_player: bool, current_player: int) -> tuple[float, Optional[tuple[int, int]]]:
-        black_board, white_board = self._convert_to_bitboard(board)
-        return self._alpha_beta_with_tt(black_board, white_board, depth, alpha, beta, maximizing_player, current_player)
                    maximizing_player: bool, current_player: int) -> tuple[float, Optional[tuple[int, int]]]:
         """互換性のための関数"""
         black_board, white_board = self._convert_to_bitboard(board)
