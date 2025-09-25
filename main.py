@@ -13,6 +13,16 @@
 # 実行制限	メモリ最大 約1GB、CPU時間 約3秒、1手あたり待ち時間上限 30秒
 
 # https://docs.python.org/ja/3.9/library/index.html Python 3.9 標準ライブラリドキュメント(必見だべや！）
+
+# https://qiita.com/a_uchida/items/bec46c20fd2965c6e1a0 ゾブリストハッシュってな～に？
+# http://www.amy.hi-ho.ne.jp/okuhara/howtoj.htm 置換表って単純だけど便利だよね。
+# ゾブリストハッシュ: 盤面を数値に変換する計算方法
+# 置換表: ゾブリストハッシュのキーとして探索結果を保存するテーブル
+
+# bhttps://speakerdeck.com/antenna_three/bitutobodojie-shuo?slide=55 BitBoardって何なの奥様？
+# https://qiita.com/zawawahoge/items/8bbd4c2319e7f7746266 ビットカウント最高効率だヒャアッ！
+
+
 from typing import Optional, Dict
 # from local_driver import Alg3D, Board # ローカル検証用
 from framework import Alg3D, Board # 本番用
@@ -23,7 +33,6 @@ from dataclasses import dataclass
 """
 高速ビットカウント関数
 bin().count('1')より3-5倍高速なビットポピュレーションカウント実装
-https://qiita.com/zawawahoge/items/8bbd4c2319e7f7746266
 """
 def popcount(x):
     '''xの立っているビット数をカウントする関数
