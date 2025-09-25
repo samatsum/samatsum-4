@@ -1,4 +1,19 @@
-from typing import List, Tuple, Optional, Dict
+# ファイル拡張子	.py
+# 必須関数	"必須関数 get_move(
+#     board: list[list[list[int]]],
+#     player: int,
+#     last_move: tuple[int, int, int]
+# ) -> tuple[int, int]
+# "
+# 戻り値	(x, y) のタプル（0〜3 の範囲）
+# 利用可能ライブラリ	Python標準ライブラリのみ（）
+# 禁止ライブラリ	os, sys, subprocess, socket, requests, urllib, http, asyncio, threading, multiprocessing, など
+# 禁止関数	open, eval, exec, compile, __import__, system, popen
+# Pythonバージョン	サーバは Python 3.9 互換 で実行（match文など3.10以降専用構文は不可）
+# 実行制限	メモリ最大 約1GB、CPU時間 約3秒、1手あたり待ち時間上限 30秒
+
+# https://docs.python.org/ja/3.9/library/index.html Python 3.9 標準ライブラリドキュメント(必見だべや！）
+from typing import Optional, Dict
 # from local_driver import Alg3D, Board # ローカル検証用
 from framework import Alg3D, Board # 本番用
 import math
@@ -19,7 +34,7 @@ class TranspositionEntry:
     depth: int 
     score: float
     flag: str  # "EXACT", "LOWERBOUND", "UPPERBOUND"
-    best_move: Optional[Tuple[int, int]]
+    best_move: Optional[tuple[int, int]]
 
 class MyAI(Alg3D):
     def __init__(self):
@@ -34,14 +49,15 @@ class MyAI(Alg3D):
         self.zobrist_table = self._initialize_zobrist_table()
         
         # ===== 置換表（Transposition Table）の初期化 =====
-        # 辞書形式で実装。実用では固定サイズのハッシュテーブルを使うことも多い
+        # メモリ制限対応：最大サイズを制限（約100MBに相当）
+        self.max_table_size = 1000000  # 最大100万エントリ
         self.transposition_table: Dict[int, TranspositionEntry] = {}
         
         # 置換表のヒット数統計（デバッグ用）
         self.tt_hits = 0
         self.tt_queries = 0
         
-    def _initialize_zobrist_table(self) -> List[List[int]]:
+    def _initialize_zobrist_table(self) -> list[list[int]]:
         """
         ゾブリストハッシュテーブルを初期化
         
@@ -97,7 +113,22 @@ class MyAI(Alg3D):
             
         return hash_value
     
-    def _lookup_transposition_table(self, hash_key: int, depth: int, alpha: float, beta: float) -> Tuple[bool, float, Optional[Tuple[int, int]]]:
+    def _manage_table_size(self):
+        """
+        置換表のサイズ管理（メモリ制限対応）
+        
+        メモリ制限を超えないよう、置換表のサイズを監視し、
+        必要に応じて古いエントリを削除する
+        """
+        if len(self.transposition_table) > self.max_table_size:
+            # 簡単な実装：テーブルサイズを半分にする
+            # より高度な実装では、アクセス頻度や深度に基づいて削除する
+            items = list(self.transposition_table.items())
+            # 後半を削除（ランダムに近い効果）
+            keep_count = len(items) // 2
+            self.transposition_table = dict(items[:keep_count])
+    
+    def _lookup_transposition_table(self, hash_key: int, depth: int, alpha: float, beta: float) -> tuple[bool, float, Optional[tuple[int, int]]]:
         """
         置換表から過去の探索結果を検索
         
@@ -150,7 +181,7 @@ class MyAI(Alg3D):
         return False, 0.0, entry.best_move
     
     def _store_transposition_table(self, hash_key: int, depth: int, score: float, 
-                                  alpha: float, beta: float, best_move: Optional[Tuple[int, int]]):
+                                  alpha: float, beta: float, best_move: Optional[tuple[int, int]]):
         """
         置換表に探索結果を保存
         
@@ -159,6 +190,9 @@ class MyAI(Alg3D):
         - LOWERBOUND: 下限値（score >= beta、beta cutoffが発生）
         - UPPERBOUND: 上限値（score <= alpha、実際の値はこれ以下）
         """
+        # メモリ使用量管理
+        self._manage_table_size()
+        
         # 評価値のタイプを決定
         if score <= alpha:
             flag = "UPPERBOUND"
@@ -180,10 +214,10 @@ class MyAI(Alg3D):
 
     def get_move(
         self,
-        board: List[List[List[int]]], # 盤面情報
+        board: list[list[list[int]]], # 盤面情報
         player: int, # 先手(黒):1 後手(白):2
-        last_move: Tuple[int, int, int] # 直前に置かれた場所(x, y, z)
-    ) -> Tuple[int, int]:
+        last_move: tuple[int, int, int] # 直前に置かれた場所(x, y, z)
+    ) -> tuple[int, int]:
         """
         置換表+ゾブリストハッシュ対応の立体４目並べAI
         """
@@ -206,9 +240,9 @@ class MyAI(Alg3D):
                                               -math.inf, math.inf, True, player)
         
         # 置換表のヒット率を出力（デバッグ用）
-        if self.tt_queries > 0:
-            hit_rate = (self.tt_hits / self.tt_queries) * 100
-            # print(f"置換表ヒット率: {hit_rate:.1f}% ({self.tt_hits}/{self.tt_queries})")
+        # if self.tt_queries > 0:
+        #     hit_rate = (self.tt_hits / self.tt_queries) * 100
+        #     print(f"置換表ヒット率: {hit_rate:.1f}% ({self.tt_hits}/{self.tt_queries})")
         
         if best_move is None:
             return valid_moves[0]
@@ -217,7 +251,7 @@ class MyAI(Alg3D):
     
     def _alpha_beta_with_tt(self, black_board: int, white_board: int, depth: int, 
                            alpha: float, beta: float, maximizing_player: bool, 
-                           current_player: int) -> Tuple[float, Optional[Tuple[int, int]]]:
+                           current_player: int) -> tuple[float, Optional[tuple[int, int]]]:
         """
         置換表を利用したAlpha-Betaプルーニング付きのMinimax探索
         
@@ -306,7 +340,7 @@ class MyAI(Alg3D):
     
     # ===== 以下、元のコードの関数群（変更なし） =====
     
-    def _convert_to_bitboard(self, board: List[List[List[int]]]) -> Tuple[int, int]:
+    def _convert_to_bitboard(self, board: list[list[list[int]]]) -> tuple[int, int]:
         """3次元リストをビットボードに変換"""
         black_board = 0
         white_board = 0
@@ -322,7 +356,7 @@ class MyAI(Alg3D):
         
         return black_board, white_board
     
-    def _get_valid_moves_bb(self, black_board: int, white_board: int) -> List[Tuple[int, int]]:
+    def _get_valid_moves_bb(self, black_board: int, white_board: int) -> list[tuple[int, int]]:
         """ビットボードから有効な手を取得"""
         valid_moves = []
         occupied = black_board | white_board
@@ -337,7 +371,7 @@ class MyAI(Alg3D):
         return valid_moves
     
     def _make_move_bb(self, black_board: int, white_board: int, x: int, y: int, 
-                     player: int) -> Tuple[int, int, int]:
+                     player: int) -> tuple[int, int, int]:
         """ビットボードに手を打ち、新しいボードとz座標を返す"""
         occupied = black_board | white_board
         
@@ -365,7 +399,7 @@ class MyAI(Alg3D):
                 return True
         return False
     
-    def _generate_win_patterns(self) -> List[int]:
+    def _generate_win_patterns(self) -> list[int]:
         """4つ並びの勝利パターンを事前計算"""
         patterns = []
         
@@ -447,13 +481,13 @@ class MyAI(Alg3D):
         return score
     
     # 互換性のための関数群
-    def get_valid_moves(self, board: List[List[List[int]]]) -> List[Tuple[int, int]]:
+    def get_valid_moves(self, board: list[list[list[int]]]) -> list[tuple[int, int]]:
         """互換性のための関数"""
         black_board, white_board = self._convert_to_bitboard(board)
         return self._get_valid_moves_bb(black_board, white_board)
     
-    def alpha_beta(self, board: List[List[List[int]]], depth: int, alpha: float, beta: float, 
-                   maximizing_player: bool, current_player: int) -> Tuple[float, Optional[Tuple[int, int]]]:
+    def alpha_beta(self, board: list[list[list[int]]], depth: int, alpha: float, beta: float, 
+                   maximizing_player: bool, current_player: int) -> tuple[float, Optional[tuple[int, int]]]:
         """互換性のための関数"""
         black_board, white_board = self._convert_to_bitboard(board)
         return self._alpha_beta_with_tt(black_board, white_board, depth, alpha, beta, maximizing_player, current_player)
