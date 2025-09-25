@@ -13,13 +13,33 @@
 # 実行制限	メモリ最大 約1GB、CPU時間 約3秒、1手あたり待ち時間上限 30秒
 
 # https://docs.python.org/ja/3.9/library/index.html Python 3.9 標準ライブラリドキュメント(必見だべや！）
-
 from typing import Optional, Dict
 # from local_driver import Alg3D, Board # ローカル検証用
 from framework import Alg3D, Board # 本番用
 import math
 import random
 from dataclasses import dataclass
+
+"""
+高速ビットカウント関数
+bin().count('1')より3-5倍高速なビットポピュレーションカウント実装
+https://qiita.com/zawawahoge/items/8bbd4c2319e7f7746266
+"""
+def popcount(x):
+    '''xの立っているビット数をカウントする関数
+    (xは64bit整数)'''
+
+    # 2bitごとの組に分け、立っているビット数を2bitで表現する
+    x = x - ((x >> 1) & 0x5555555555555555)
+
+    # 4bit整数に 上位2bit + 下位2bit を計算した値を入れる
+    x = (x & 0x3333333333333333) + ((x >> 2) & 0x3333333333333333)
+
+    x = (x + (x >> 4)) & 0x0f0f0f0f0f0f0f0f # 8bitごと
+    x = x + (x >> 8) # 16bitごと
+    x = x + (x >> 16) # 32bitごと
+    x = x + (x >> 32) # 64bitごと = 全部の合計
+    return x & 0x0000007f
 
 """
 置換表（Transposition Table）のエントリを表すクラス
@@ -38,8 +58,8 @@ class TranspositionEntry:
     best_move: Optional[tuple[int, int]]
 
 """
-立体四目並べAI - Bitboard + 置換表 + ゾブリストハッシュ実装
-主要技術: Bitboard, Alpha-Beta pruning, 置換表, ゾブリストハッシュ, 勝利パターン事前計算
+立体四目並べAI - Bitboard + 置換表 + ゾブリストハッシュ + 高速ビットカウント実装
+主要技術: Bitboard, Alpha-Beta pruning, 置換表, ゾブリストハッシュ, 高速popcount
 """
 class MyAI(Alg3D):
     
@@ -443,8 +463,9 @@ class MyAI(Alg3D):
         return player_score - opponent_score
     
     """
-    ビットボード版脅威評価
+    ビットボード版脅威評価【高速ビットカウント版】
     勝利パターンから自分の石の連続性を評価（3つ並び50点、2つ並び10点、1つ1点）
+    従来のbin().count('1')より3-5倍高速なpopcount()を使用
     """
     def _evaluate_threats_bb(self, my_board: int, opp_board: int) -> float:
         score = 0.0
@@ -456,7 +477,8 @@ class MyAI(Alg3D):
             if opp_bits:
                 continue
             
-            count = bin(my_bits).count('1')
+            # ===== 高速化：popcountを使用 =====
+            count = popcount(my_bits)  # 従来のbin(my_bits).count('1')より3-5倍高速！
             
             if count == 3:
                 score += 50.0
